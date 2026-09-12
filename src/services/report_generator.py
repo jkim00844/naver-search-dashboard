@@ -33,6 +33,10 @@ def _resolve_korean_font() -> tuple[str, Optional[str]]:
         "/Library/Fonts/AppleGothic.ttf",
         "/System/Library/Fonts/Supplemental/NanumGothic.ttf",
         "/Library/Fonts/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
+        "/usr/share/fonts/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     ]
 
     selected_path = None
@@ -75,7 +79,12 @@ class PdfReportGenerator:
     def __init__(self):
         self.font_name, self.font_path = _resolve_korean_font()
         if self.font_path:
-            plt.rcParams["font.family"] = "AppleGothic" if "AppleGothic" in self.font_path else "sans-serif"
+            if "AppleGothic" in self.font_path:
+                plt.rcParams["font.family"] = "AppleGothic"
+            elif "Nanum" in self.font_path:
+                plt.rcParams["font.family"] = "NanumGothic"
+            else:
+                plt.rcParams["font.family"] = "sans-serif"
         plt.rcParams["axes.unicode_minus"] = False
 
     def generate_report(

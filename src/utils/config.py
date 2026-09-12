@@ -21,8 +21,20 @@ def get_naver_credentials(
     if env_path.exists():
         load_dotenv(dotenv_path=env_path, override=True)
 
-    client_id = (override_client_id or os.getenv("NAVER_CLIENT_ID", "")).strip()
-    client_secret = (override_client_secret or os.getenv("NAVER_CLIENT_SECRET", "")).strip()
+    secret_id = ""
+    secret_key = ""
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            if "NAVER_CLIENT_ID" in st.secrets:
+                secret_id = str(st.secrets["NAVER_CLIENT_ID"])
+            if "NAVER_CLIENT_SECRET" in st.secrets:
+                secret_key = str(st.secrets["NAVER_CLIENT_SECRET"])
+    except Exception:
+        pass
+
+    client_id = (override_client_id or os.getenv("NAVER_CLIENT_ID", "") or secret_id).strip()
+    client_secret = (override_client_secret or os.getenv("NAVER_CLIENT_SECRET", "") or secret_key).strip()
     return client_id, client_secret
 
 
