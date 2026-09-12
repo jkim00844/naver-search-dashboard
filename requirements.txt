@@ -1,0 +1,29 @@
+# ==============================================================================
+# Naver Market Insight & Search EDA Dashboard
+# Dependencies for running the Streamlit dashboard
+# Install with: pip install -r requirements.txt
+# ==============================================================================
+
+# Core Web Dashboard Framework
+streamlit>=1.50.0
+
+# API & Environment
+requests>=2.32.5
+python-dotenv>=1.2.1
+
+# Data Processing & Analysis
+pandas>=2.3.3
+numpy>=2.0.0
+
+# Data Visualization
+plotly>=7.0.0
+matplotlib>=3.9.4
+wordcloud>=1.9.6
+
+# Korean NLP & Graph Network Analysis
+kiwipiepy>=0.23.2
+networkx>=3.2.1
+
+# Executive PDF Report Generation
+reportlab>=5.0.1
+pillow>=11.0.0
