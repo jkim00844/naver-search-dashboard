@@ -10,6 +10,10 @@ def get_korean_font_path() -> str:
     """
     OS별 한글 폰트 경로 자동 탐색 (Mac, Linux, Windows)
     """
+    bundled_font = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts", "NanumGothic.ttf")
+    if os.path.exists(bundled_font):
+        return bundled_font
+
     system = platform.system()
     candidates = []
     if system == "Darwin":  # Mac

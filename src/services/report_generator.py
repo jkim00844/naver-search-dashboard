@@ -26,41 +26,68 @@ from reportlab.platypus import (
 )
 
 
-def _resolve_korean_font() -> tuple[str, Optional[str]]:
-    """macOS 및 시스템의 한국어 TTF 폰트 경로 탐색 및 ReportLab 등록"""
-    candidates = [
-        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
-        "/Library/Fonts/AppleGothic.ttf",
-        "/System/Library/Fonts/Supplemental/NanumGothic.ttf",
-        "/Library/Fonts/NanumGothic.ttf",
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-        "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
-        "/usr/share/fonts/nanum/NanumGothic.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    ]
+def _resolve_korean_font() -> tuple[str, Optional[str], Optional[str]]:
+    """프로젝트 내장 폰트 및 시스템의 한국어 TTF 폰트 경로 탐색 및 ReportLab 등록 (Regular & Bold)"""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bundled_regular = os.path.join(base_dir, "assets", "fonts", "NanumGothic.ttf")
+    bundled_bold = os.path.join(base_dir, "assets", "fonts", "NanumGothic-Bold.ttf")
 
-    selected_path = None
-    for p in candidates:
-        if os.path.exists(p):
-            selected_path = p
-            break
+    regular_path = None
+    bold_path = None
 
-    if not selected_path:
+    # 1. 프로젝트 내장 폰트 최우선 적용
+    if os.path.exists(bundled_regular):
+        regular_path = bundled_regular
+        if os.path.exists(bundled_bold):
+            bold_path = bundled_bold
+
+    # 2. 시스템 폰트 탐색
+    if not regular_path:
+        candidates = [
+            "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+            "/Library/Fonts/AppleGothic.ttf",
+            "/System/Library/Fonts/Supplemental/NanumGothic.ttf",
+            "/Library/Fonts/NanumGothic.ttf",
+            "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+            "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
+            "/usr/share/fonts/nanum/NanumGothic.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                regular_path = p
+                break
+
+    # 3. Matplotlib 폰트 매니저 fallback
+    if not regular_path:
         for f in fm.fontManager.ttflist:
-            if any(k in f.name.lower() for k in ["applegothic", "nanum", "malgun", "gothic"]):
+            if any(k in f.name.lower() for k in ["nanum", "applegothic", "malgun", "gothic"]):
                 if f.fname.endswith(".ttf"):
-                    selected_path = f.fname
+                    regular_path = f.fname
                     break
 
     font_name = "KoreanFont"
-    if selected_path:
+    if regular_path:
         try:
-            pdfmetrics.registerFont(TTFont(font_name, selected_path))
-            return font_name, selected_path
+            pdfmetrics.registerFont(TTFont(font_name, regular_path))
+            if bold_path and os.path.exists(bold_path):
+                pdfmetrics.registerFont(TTFont(f"{font_name}-Bold", bold_path))
+            else:
+                pdfmetrics.registerFont(TTFont(f"{font_name}-Bold", regular_path))
+
+            from reportlab.pdfbase.pdfmetrics import registerFontFamily
+            registerFontFamily(
+                font_name,
+                normal=font_name,
+                bold=f"{font_name}-Bold",
+                italic=font_name,
+                boldItalic=f"{font_name}-Bold",
+            )
+            return font_name, regular_path, bold_path
         except Exception:
             pass
 
-    return "Helvetica", None
+    return "Helvetica", None, None
 
 
 class NumberedCanvas:
@@ -77,13 +104,13 @@ class PdfReportGenerator:
     """
 
     def __init__(self):
-        self.font_name, self.font_path = _resolve_korean_font()
+        self.font_name, self.font_path, self.bold_path = _resolve_korean_font()
         if self.font_path:
-            if "AppleGothic" in self.font_path:
-                plt.rcParams["font.family"] = "AppleGothic"
-            elif "Nanum" in self.font_path:
-                plt.rcParams["font.family"] = "NanumGothic"
-            else:
+            try:
+                fm.fontManager.addfont(self.font_path)
+                font_prop = fm.FontProperties(fname=self.font_path)
+                plt.rcParams["font.family"] = font_prop.get_name()
+            except Exception:
                 plt.rcParams["font.family"] = "sans-serif"
         plt.rcParams["axes.unicode_minus"] = False
 
@@ -114,15 +141,15 @@ class PdfReportGenerator:
 
         styles = getSampleStyleSheet()
         fn = self.font_name
+        fn_bold = f"{fn}-Bold" if f"{fn}-Bold" in pdfmetrics.getRegisteredFontNames() else fn
 
         # 타이포그래피 스타일 정의
         title_style = ParagraphStyle(
             "DocTitle",
-            fontName=fn,
+            fontName=fn_bold,
             fontSize=20,
             leading=25,
             textColor=colors.HexColor("#0F172A"),
-            fontweight="bold",
             spaceAfter=3,
         )
         sub_style = ParagraphStyle(
@@ -135,11 +162,10 @@ class PdfReportGenerator:
         )
         sec_title_style = ParagraphStyle(
             "SecTitle",
-            fontName=fn,
+            fontName=fn_bold,
             fontSize=12,
             leading=16,
             textColor=colors.HexColor("#0F172A"),
-            fontweight="bold",
             spaceBefore=14,
             spaceAfter=8,
         )
@@ -167,20 +193,18 @@ class PdfReportGenerator:
         )
         table_cell_bold = ParagraphStyle(
             "TableCellBold",
-            fontName=fn,
+            fontName=fn_bold,
             fontSize=8,
             leading=11,
             textColor=colors.HexColor("#0F172A"),
-            fontweight="bold",
         )
         table_head = ParagraphStyle(
             "TableHead",
-            fontName=fn,
+            fontName=fn_bold,
             fontSize=8.5,
             leading=12,
             textColor=colors.HexColor("#FFFFFF"),
             alignment=1,
-            fontweight="bold",
         )
         kpi_title = ParagraphStyle(
             "KPITitle",
@@ -192,23 +216,22 @@ class PdfReportGenerator:
         )
         kpi_val = ParagraphStyle(
             "KPIVal",
-            fontName=fn,
+            fontName=fn_bold,
             fontSize=13,
             leading=17,
             textColor=colors.HexColor("#02B852"),
             alignment=1,
-            fontweight="bold",
         )
 
         story = []
 
         # ==========================================
-        # 1. 헤더 및 문서 메타 정보
+        # 1. 헤더 및 문서 메타 정보 (이모지 대신 심플 텍스트 뱃지 사용)
         # ==========================================
         now_str = datetime.now().strftime("%Y년 %m월 %d일 %H:%M")
         kw_display = ", ".join(keywords) if keywords else "전체"
 
-        story.append(Paragraph("📊 NAVER 멀티 채널 시장 분석 종합 리포트", title_style))
+        story.append(Paragraph("NAVER 멀티 채널 시장 분석 종합 리포트", title_style))
         story.append(
             Paragraph(
                 f"<b>발행 일시:</b> {now_str} &nbsp;&nbsp;|&nbsp;&nbsp; <b>분석 대상:</b> [{kw_display}] &nbsp;&nbsp;|&nbsp;&nbsp; <b>출처:</b> NAVER Search API & DataLab",
@@ -241,10 +264,10 @@ class PdfReportGenerator:
 
         kpi_data = [
             [
-                Paragraph("🎯 분석 키워드 수", kpi_title),
-                Paragraph("📥 총 포털 버즈량", kpi_title),
-                Paragraph("🔥 1위 점유 채널", kpi_title),
-                Paragraph("📈 수집 성공률", kpi_title),
+                Paragraph("분석 키워드 수", kpi_title),
+                Paragraph("총 포털 버즈량", kpi_title),
+                Paragraph("1위 점유 채널", kpi_title),
+                Paragraph("수집 성공률", kpi_title),
             ],
             [
                 Paragraph(f"{kw_count}개", kpi_val),
