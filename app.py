@@ -90,15 +90,16 @@ st.html(
         -webkit-font-smoothing: antialiased !important;
     }
 
-    /* 메인 콘텐츠 여백 정리 */
+    /* 메인 콘텐츠 여백 정리 (Streamlit 상단 헤더 겹침 완벽 방지) */
     .block-container {
-        padding-top: 2rem !important;
+        padding-top: 4.25rem !important;
         padding-bottom: 3.5rem !important;
         max-width: 1360px !important;
     }
 
     /* 히어로 헤더 배너 */
     .hero-container {
+        margin-top: 0.5rem;
         margin-bottom: 2rem;
         padding-bottom: 1.25rem;
         border-bottom: 1px solid var(--border);
@@ -107,7 +108,7 @@ st.html(
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 4px 12px;
+        padding: 5px 14px;
         background: rgba(2, 184, 82, 0.08);
         border: 1px solid rgba(2, 184, 82, 0.25);
         border-radius: 9999px;
@@ -116,6 +117,7 @@ st.html(
         color: #029443;
         letter-spacing: 0.02em;
         margin-bottom: 0.75rem;
+        line-height: 1.2;
     }
     .live-dot {
         width: 7px;
