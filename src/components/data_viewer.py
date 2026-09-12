@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import streamlit as st
 from src.api.endpoints import SEARCH_CHANNELS
@@ -5,7 +6,7 @@ from src.api.endpoints import SEARCH_CHANNELS
 
 def render_data_viewer(df_items: pd.DataFrame):
     """
-    수집된 상세 검색 결과 다차원 탐색, 조합 정렬(최근업로드/인기도/텍스트분량),
+    수집된 상세 검색 결과 다차원 탐색, 조합 정렬(최근업로드+인기도복합/최근업로드/인기도/텍스트분량),
     결과 내 실시간 텍스트 재검색 및 CSV 다운로드 뷰어
     """
     if df_items.empty:
@@ -18,8 +19,8 @@ def render_data_viewer(df_items: pd.DataFrame):
     st.info(
         "💡 **조합 검색 가이드**: 네이버 검색 API는 개별 문서의 단순 조회수 수치 대신, "
         "사용자 클릭·조회·관심도 가중치가 종합 반영된 **'포털 추천/인기도순(sim)'**을 제공합니다. "
-        "아래 정렬 및 필터를 조합하여 **'최근 업로드순(최신 발행일)'**, **'포털 인기도순(랭킹)'**, "
-        "**'제목 키워드 일치순'** 및 **'결과 내 본문 검색'**으로 원하는 결과를 정밀하게 선별할 수 있습니다."
+        "아래 정렬에서 **'🔥 최근 업로드 + 인기도 복합순 (트렌딩 추천)'**을 선택하면 **최신성(발행일)**과 **인기도(포털 랭킹)**를 "
+        "황금비율로 결합한 최신 트렌드 알짜 문서를 발굴할 수 있으며, 가중치 비율도 자유롭게 조절 가능합니다."
     )
 
     # 원본 랭킹 부여 (네이버 수집 순서 = 인기도/정확도 순위)
@@ -48,6 +49,7 @@ def render_data_viewer(df_items: pd.DataFrame):
         sort_mode = st.selectbox(
             "⚡ 정렬 기준 조합",
             options=[
+                "🔥 최근 업로드 + 인기도 복합순 (트렌딩 추천)",
                 "⏱️ 최근 업로드순 (발행일 최신순)",
                 "🎯 포털 추천/인기도순 (네이버 랭킹순)",
                 "🔍 제목 키워드 일치 우선순",
@@ -71,6 +73,25 @@ def render_data_viewer(df_items: pd.DataFrame):
             key="dv_text_search",
         ).strip().lower()
 
+    # 복합순 선택 시 가중치 커스텀 컨트롤 표시
+    recency_weight = 50
+    if "복합순" in sort_mode:
+        with st.expander("⚖️ 최신성 vs 인기도 가중치 비율 세부 설정 (기본 50% : 50%)", expanded=False):
+            c_w1, c_w2 = st.columns([3, 1])
+            with c_w1:
+                recency_weight = st.slider(
+                    "최근 업로드(발행일) 반영 비율 (%)",
+                    min_value=10,
+                    max_value=90,
+                    value=50,
+                    step=10,
+                    key="dv_recency_weight",
+                    help="비율이 높을수록 최신 발행 글에 가중치를 두고, 낮을수록 네이버 검색 랭킹(추천/인기도)에 가중치를 둡니다.",
+                )
+            with c_w2:
+                pop_weight = 100 - recency_weight
+                st.metric("가중치 배분", f"{recency_weight}% : {pop_weight}%", help="최신성 : 인기도")
+
     # 1. 기본 필터링 적용 (검색어, 채널)
     filtered_df = df_work.copy()
     if selected_kw != "전체":
@@ -90,7 +111,33 @@ def render_data_viewer(df_items: pd.DataFrame):
         filtered_df = filtered_df[mask]
 
     # 3. 정렬 적용
-    if "최근 업로드순" in sort_mode:
+    if "복합순" in sort_mode:
+        # 1) 최신성 점수 (최신 발행일 기준 하이퍼볼릭 감쇠: 오늘 100점, 어제 ~87점, 1주전 ~49점, 1달전 ~18점)
+        if "pub_date_str" in filtered_df.columns:
+            date_series = pd.to_datetime(filtered_df["pub_date_str"], errors="coerce")
+            latest_dt = date_series.dropna().max()
+            if pd.notna(latest_dt):
+                diff_days = (latest_dt - date_series).dt.total_seconds() / 86400.0
+                recency_score = 100.0 / (1.0 + np.maximum(0.0, diff_days) * 0.15)
+                recency_score = recency_score.fillna(20.0)
+            else:
+                recency_score = pd.Series(50.0, index=filtered_df.index)
+        else:
+            recency_score = pd.Series(50.0, index=filtered_df.index)
+
+        # 2) 네이버 포털 인기도 점수 (1위 100점 ~ 100위 1점)
+        ranks = pd.to_numeric(filtered_df.get("api_rank", 1), errors="coerce").fillna(100)
+        pop_score = np.clip(101.0 - ranks, 1.0, 100.0)
+
+        # 3) 가중합 복합 점수 산출
+        w_rec = recency_weight / 100.0
+        w_pop = (100.0 - recency_weight) / 100.0
+        filtered_df["composite_score"] = ((recency_score * w_rec) + (pop_score * w_pop)).round(1)
+
+        # 복합 점수 높은 순(내림차순), 동점 시 원래 네이버 랭킹(오름차순)
+        filtered_df = filtered_df.sort_values(by=["composite_score", "api_rank"], ascending=[False, True])
+
+    elif "최근 업로드순" in sort_mode:
         # pub_date_str 내림차순, 없는 경우 빈 문자열로 정렬
         if "pub_date_str" in filtered_df.columns:
             filtered_df["_sort_date"] = filtered_df["pub_date_str"].fillna("")
@@ -130,7 +177,9 @@ def render_data_viewer(df_items: pd.DataFrame):
         active_filters.append(f"채널: `{SEARCH_CHANNELS[selected_channel]['name']}`")
     if text_query:
         active_filters.append(f"검색어 포함: `{text_query}`")
-    active_filters.append(f"정렬: `{sort_mode.split()[1]}`")
+
+    sort_tag = "최근+인기도 복합" if "복합순" in sort_mode else sort_mode.split()[1]
+    active_filters.append(f"정렬: `{sort_tag}`")
 
     filter_desc = " · ".join(active_filters)
     st.caption(f"📊 조건 부합 결과: **{total_found:,}건** ({filter_desc})")
@@ -159,14 +208,17 @@ def render_data_viewer(df_items: pd.DataFrame):
             # 이미지 채널 레이아웃
             if ch_key == "image":
                 img_cols = st.columns(4)
-                for idx, (_, row) in enumerate(ch_data.iterrows()):
-                    col = img_cols[idx % 4]
+                for idx, (_, row) in enumerate(ch_data.iterrows(), start=1):
+                    col = img_cols[(idx - 1) % 4]
                     with col:
                         thumb = row.get("thumbnail") or row.get("link")
                         if thumb:
                             st.image(thumb, use_container_width=True)
-                        rank_num = row.get("api_rank", idx + 1)
-                        st.markdown(f"**#{rank_num} [{row.get('keyword')}]** {row.get('title')[:35]}...")
+                        rank_num = row.get("api_rank", idx)
+                        if "복합순" in sort_mode and "composite_score" in row:
+                            st.markdown(f"**#{idx} (🔥 {row['composite_score']:.0f}점 / 포털 #{rank_num})** {row.get('title')[:30]}...")
+                        else:
+                            st.markdown(f"**#{rank_num} [{row.get('keyword')}]** {row.get('title')[:35]}...")
                         if row.get("sizeheight") and row.get("sizewidth"):
                             st.caption(f"📐 해상도: {row.get('sizewidth')}×{row.get('sizeheight')} px")
                         if row.get("link"):
@@ -178,7 +230,10 @@ def render_data_viewer(df_items: pd.DataFrame):
                 for idx, (_, row) in enumerate(ch_data.iterrows(), start=1):
                     rank_num = row.get("api_rank", idx)
                     with st.container():
-                        st.markdown(f"#### 📍 #{rank_num}. {row.get('title')}")
+                        if "복합순" in sort_mode and "composite_score" in row:
+                            st.markdown(f"#### 📍 #{idx}. {row.get('title')} `🔥 {row['composite_score']:.0f}점 (포털 #{rank_num})`")
+                        else:
+                            st.markdown(f"#### 📍 #{rank_num}. {row.get('title')}")
                         badges = [
                             f"🔍 검색어: `{row.get('keyword')}`",
                             f"🏷️ 분류: `{row.get('category', '정보 없음')}`",
@@ -201,13 +256,27 @@ def render_data_viewer(df_items: pd.DataFrame):
             else:
                 for idx, (_, row) in enumerate(ch_data.iterrows(), start=1):
                     rank_num = row.get("api_rank", idx)
-                    rank_badge = f"🥇 {rank_num}위" if rank_num == 1 else (f"🥈 {rank_num}위" if rank_num == 2 else (f"🥉 {rank_num}위" if rank_num == 3 else f"#{rank_num}"))
+
+                    if "복합순" in sort_mode and "composite_score" in row:
+                        top_icon = "🔥 1위" if idx == 1 else (f"🥈 2위" if idx == 2 else (f"🥉 3위" if idx == 3 else f"#{idx}"))
+                        rank_badge = f"{top_icon} `[트렌딩 {row['composite_score']:.0f}점]`"
+                    elif "최근 업로드순" in sort_mode:
+                        top_icon = "🥇 최신 1위" if idx == 1 else (f"🥈 최신 2위" if idx == 2 else (f"🥉 최신 3위" if idx == 3 else f"#{idx}"))
+                        rank_badge = f"{top_icon}"
+                    else:
+                        rank_badge = f"🥇 {rank_num}위" if rank_num == 1 else (f"🥈 {rank_num}위" if rank_num == 2 else (f"🥉 {rank_num}위" if rank_num == 3 else f"#{rank_num}"))
 
                     with st.container():
                         st.markdown(f"##### {rank_badge} {row.get('title')}")
 
                         # 메타데이터 뱃지 행
                         meta_badges = []
+                        if "복합순" in sort_mode and "composite_score" in row:
+                            meta_badges.append(f"🔥 **트렌딩 복합점수:** {row['composite_score']}점")
+                            meta_badges.append(f"🎯 **포털 원문순위:** {rank_num}위")
+                        elif "최근 업로드순" in sort_mode:
+                            meta_badges.append(f"🎯 **포털 원문순위:** {rank_num}위")
+
                         if row.get("keyword"):
                             meta_badges.append(f"🔍 `{row['keyword']}`")
 
@@ -244,3 +313,4 @@ def render_data_viewer(df_items: pd.DataFrame):
                         if row.get("link"):
                             st.markdown(f"[🔗 원문 기사/포스트 바로가기]({row.get('link')})")
                         st.markdown("---")
+
